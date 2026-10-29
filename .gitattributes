@@ -1,0 +1,2 @@
+* text=auto eol=lf
+testdata/*.xml -text
