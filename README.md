@@ -27,6 +27,7 @@ At forex_buying (1 USD = 49.6997 TRY). TCMB bulletin 2026/203 of 27.10.2026. No 
 |---|---|
 | `rates` | A day's bulletin: forex and banknote (efektif) buying/selling for all 22 currencies, or only the ones asked for |
 | `convert` | Any amount between any two TCMB currencies or TRY, at the chosen rate; cross rates go through the lira |
+| `history` | One currency's daily rate over up to 62 days, with day-over-day change, overall change, low and high |
 
 Rate kinds: `forex_buying` (döviz alış, default), `forex_selling` (döviz satış), `banknote_buying` (efektif alış), `banknote_selling` (efektif satış).
 

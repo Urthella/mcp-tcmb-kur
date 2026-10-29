@@ -203,6 +203,53 @@ func (b *Bulletin) Convert(amount *big.Rat, from, to, kind string) (*big.Rat, er
 	return out.Quo(out, t), nil
 }
 
+const maxHistoryDays = 62
+
+type Point struct {
+	Date time.Time
+	Rate *big.Rat // TRY per Unit, as published
+}
+
+// History returns one point per bulletin between from and to, skipping days without one.
+func (c *Client) History(ctx context.Context, code, kind string, from, to time.Time) ([]Point, int64, error) {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if today := c.Today(); to.After(today) {
+		to = today
+	}
+	if to.Before(from) {
+		return nil, 0, errors.New("from must not be after to")
+	}
+	if days := int(to.Sub(from).Hours()/24) + 1; days > maxHistoryDays {
+		return nil, 0, fmt.Errorf("at most %d days per call, asked for %d", maxHistoryDays, days)
+	}
+	var points []Point
+	var unit int64
+	// ponytail: one request per day, sequential and cached; plenty for two months of history.
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		b, err := c.Day(ctx, d)
+		if err != nil {
+			return nil, 0, err
+		}
+		if b == nil {
+			continue
+		}
+		r, ok := b.Rates[code]
+		if !ok {
+			return nil, 0, fmt.Errorf("TCMB doesn't publish %s; available: %s", code, strings.Join(b.Codes, ", "))
+		}
+		q := r.Quoted(kind)
+		if q == nil {
+			return nil, 0, fmt.Errorf("TCMB publishes no %s rate for %s", kind, code)
+		}
+		points = append(points, Point{Date: b.Date, Rate: q})
+		unit = r.Unit
+	}
+	if len(points) == 0 {
+		return nil, 0, fmt.Errorf("no TCMB bulletin between %s and %s", from.Format("2006-01-02"), to.Format("2006-01-02"))
+	}
+	return points, unit, nil
+}
+
 func validKind(kind string) (string, error) {
 	if kind == "" {
 		return ForexBuying, nil
