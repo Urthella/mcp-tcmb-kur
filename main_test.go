@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -60,5 +61,38 @@ func TestMCPTools(t *testing.T) {
 	}
 	if out, isErr = call(t, cs, "rates", map[string]any{"date": "29/10/2026"}); !isErr || !strings.Contains(out, "YYYY-MM-DD") {
 		t.Errorf("bad date accepted: %s", out)
+	}
+}
+
+func TestHistory(t *testing.T) {
+	c, _ := fakeTCMB(t)
+	points, unit, err := c.History(context.Background(), "usd", ForexBuying, day(25), day(29))
+	if err != nil || unit != 1 || len(points) != 2 || !points[0].Date.Equal(day(26)) || num(points[1].Rate, 4) != "49.6997" {
+		t.Fatalf("history 25-29 Oct: %d points, unit %d, err %v", len(points), unit, err)
+	}
+	if _, _, err := c.History(context.Background(), "USD", ForexBuying, day(1).AddDate(0, -3, 0), day(29)); err == nil || !strings.Contains(err.Error(), "at most 62 days") {
+		t.Errorf("long range: %v", err)
+	}
+	if _, _, err := c.History(context.Background(), "USD", ForexBuying, day(28), day(29)); err == nil || !strings.Contains(err.Error(), "no TCMB bulletin") {
+		t.Errorf("holiday-only range: %v", err)
+	}
+
+	out, isErr := call(t, connect(t, c), "history", map[string]any{"currency": "USD", "from": "2026-10-24", "to": "2026-10-29"})
+	for _, want := range []string{
+		"USD forex_buying in TRY per 1 USD, 2 bulletins",
+		"| 26.10.2026 | 49.6732 |  |",
+		"| 27.10.2026 | 49.6997 | +0.05% |",
+		"First 49.6732, last 49.6997: +0.05%. Low 49.6732 on 26.10.2026, high 49.6997 on 27.10.2026.",
+	} {
+		if isErr || !strings.Contains(out, want) {
+			t.Errorf("history missing %q (isError=%v):\n%s", want, isErr, out)
+		}
+	}
+}
+
+func TestPct(t *testing.T) {
+	a, b := big.NewRat(200, 1), big.NewRat(150, 1)
+	if pct(a, b) != "-25.00%" || pct(b, a) != "+33.33%" || pct(a, a) != "+0.00%" {
+		t.Errorf("pct: %s %s %s", pct(a, b), pct(b, a), pct(a, a))
 	}
 }

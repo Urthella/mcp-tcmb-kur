@@ -34,6 +34,13 @@ type convertInput struct {
 	Rate   string  `json:"rate,omitempty" jsonschema:"one of: forex_buying (default), forex_selling, banknote_buying, banknote_selling"`
 }
 
+type historyInput struct {
+	Currency string `json:"currency" jsonschema:"currency code like USD"`
+	From     string `json:"from,omitempty" jsonschema:"first day as YYYY-MM-DD, default 30 days before to"`
+	To       string `json:"to,omitempty" jsonschema:"last day as YYYY-MM-DD, default today"`
+	Rate     string `json:"rate,omitempty" jsonschema:"one of: forex_buying (default), forex_selling, banknote_buying, banknote_selling"`
+}
+
 func newServer(c *Client) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-tcmb-kur", Version: version}, nil)
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
@@ -106,6 +113,73 @@ func newServer(c *Client) *mcp.Server {
 			num(amount, 4), from, num(out, 4), to, kind, strings.Join(legs, ", "), note)), nil, nil
 	})
 
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "history",
+		Description: fmt.Sprintf("Daily TCMB rate of one currency over up to %d days, with change, low and high. Days without a bulletin are skipped.", maxHistoryDays),
+		Annotations: ro,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in historyInput) (*mcp.CallToolResult, any, error) {
+		kind, err := validKind(in.Rate)
+		if err != nil {
+			return nil, nil, err
+		}
+		to, err := parseDay(in.To, c.Today())
+		if err != nil {
+			return nil, nil, err
+		}
+		from, err := parseDay(in.From, to.AddDate(0, 0, -30))
+		if err != nil {
+			return nil, nil, err
+		}
+		points, unit, err := c.History(ctx, in.Currency, kind, from, to)
+		if err != nil {
+			return nil, nil, err
+		}
+		code := strings.ToUpper(in.Currency)
+		var t strings.Builder
+		fmt.Fprintf(&t, "%s %s in TRY per %d %s, %d bulletins\n\n| Date | Rate | Change |\n|---|---|---|\n", code, kind, unit, code, len(points))
+		low, high := points[0], points[0]
+		for i, p := range points {
+			change := ""
+			if i > 0 {
+				change = pct(points[i-1].Rate, p.Rate)
+			}
+			fmt.Fprintf(&t, "| %s | %s | %s |\n", p.Date.Format("02.01.2006"), num(p.Rate, 4), change)
+			if p.Rate.Cmp(low.Rate) < 0 {
+				low = p
+			}
+			if p.Rate.Cmp(high.Rate) > 0 {
+				high = p
+			}
+		}
+		first, last := points[0], points[len(points)-1]
+		fmt.Fprintf(&t, "\nFirst %s, last %s: %s. Low %s on %s, high %s on %s.",
+			num(first.Rate, 4), num(last.Rate, 4), pct(first.Rate, last.Rate),
+			num(low.Rate, 4), low.Date.Format("02.01.2006"), num(high.Rate, 4), high.Date.Format("02.01.2006"))
+		return text(t.String()), nil, nil
+	})
+
+	return s
+}
+
+func parseDay(s string, def time.Time) (time.Time, error) {
+	if s == "" {
+		return def, nil
+	}
+	d, err := time.ParseInLocation("2006-01-02", s, istanbul)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("date must be YYYY-MM-DD, got %q", s)
+	}
+	return d, nil
+}
+
+// pct is the signed percentage change from a to b, to two decimals.
+func pct(a, b *big.Rat) string {
+	p := new(big.Rat).Sub(b, a)
+	p.Quo(p, a).Mul(p, big.NewRat(100, 1))
+	s := p.FloatString(2) + "%"
+	if p.Sign() >= 0 {
+		s = "+" + s
+	}
 	return s
 }
 
